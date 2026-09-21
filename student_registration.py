@@ -25,12 +25,16 @@ class StudentRegistration:
             max_images (int): Maximum number of images to capture
         """
         student_name = input("Enter student name: ")
-        
+
         # Create student directory if it doesn't exist
         student_dir = os.path.join(self.dataset_path, student_name)
         if not os.path.exists(student_dir):
             os.makedirs(student_dir)
-        
+
+        # Offset new filenames past any images already captured for this student,
+        # so re-registering the same name doesn't overwrite earlier captures
+        existing_images = len([f for f in os.listdir(student_dir) if f.endswith(('.jpg', '.jpeg', '.png'))])
+
         print(f"Starting registration for {student_name}...")
         
         if spacebar_capture:
@@ -52,8 +56,9 @@ class StudentRegistration:
                 print("Failed to grab frame")
                 break
                 
-            # Detect faces in the frame
-            face_locations = face_recognition.face_locations(frame)
+            # Detect faces in the frame (face_recognition expects RGB, OpenCV frames are BGR)
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            face_locations = face_recognition.face_locations(rgb_frame)
             
             # Display the frame with face rectangle
             display_frame = frame.copy()
@@ -78,7 +83,7 @@ class StudentRegistration:
             # Capture image on spacebar press or automatically
             if (spacebar_capture and key == 32 and face_locations) or (not spacebar_capture and face_locations):
                 # Save the image
-                img_name = os.path.join(student_dir, f"{student_name}_angle{count+1}.jpg")
+                img_name = os.path.join(student_dir, f"{student_name}_angle{existing_images+count+1}.jpg")
                 cv2.imwrite(img_name, frame)
                 print(f"Image {count+1}/{max_images} saved: {img_name}")
                 count += 1

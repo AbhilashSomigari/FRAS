@@ -1,6 +1,7 @@
 # attendance_system.py - Handles face recognition and attendance marking
 
 import cv2
+import csv
 import numpy as np
 import face_recognition
 import os
@@ -12,12 +13,11 @@ class AttendanceSystem:
         self.dataset_path = 'dataset'
         self.attendance_log = 'attendance_log.csv'
         self.cooldown_period = 75 * 60  # 75 minutes in seconds
-        self.student_images = []
         self.student_names = []
         self.face_encodings = []
         self.attendance_records = {}
         self.initialize_system()
-    
+
     def initialize_system(self):
         """Initialize the system by creating necessary files"""
         # Create attendance log if it doesn't exist
@@ -25,48 +25,68 @@ class AttendanceSystem:
             with open(self.attendance_log, 'w') as f:
                 f.write('Name,Date,Time\n')
             print(f"Created attendance log file: {self.attendance_log}")
+        else:
+            self.load_attendance_records()
+
+    def load_attendance_records(self):
+        """Seed the in-memory cooldown tracker from the existing log, so a restart
+        mid-session doesn't allow a student to be marked twice within the cooldown window"""
+        with open(self.attendance_log, 'r') as f:
+            for row in csv.DictReader(f):
+                marked_at = datetime.strptime(f"{row['Date']} {row['Time']}", "%Y-%m-%d %H:%M:%S").timestamp()
+                if marked_at > self.attendance_records.get(row['Name'], 0):
+                    self.attendance_records[row['Name']] = marked_at
     
     def load_dataset(self):
-        """Load student images from dataset folder and encode faces"""
+        """Load student images from dataset folder and encode faces.
+
+        Every captured angle is encoded and added as its own known-face entry
+        (rather than just the first image), so recognition can match a student
+        from any of the poses/lighting conditions captured at registration.
+        """
         print("Loading dataset...")
-        self.student_images = []
         self.student_names = []
         self.face_encodings = []
-        
+
         student_folders = [f for f in os.listdir(self.dataset_path) if os.path.isdir(os.path.join(self.dataset_path, f))]
-        
+
         if not student_folders:
             print("No student folders found in dataset. Please register students first.")
             return False
-            
+
         for student_folder in student_folders:
             folder_path = os.path.join(self.dataset_path, student_folder)
             student_name = student_folder  # Assuming folder name is student name
-            
+
             # Get all images for each student
             image_files = [f for f in os.listdir(folder_path) if f.endswith(('.jpg', '.jpeg', '.png'))]
-            
+
             if not image_files:
                 print(f"No images found for student {student_name}")
                 continue
-                
-            # Use first image for encoding
-            img_path = os.path.join(folder_path, image_files[0])
-            img = face_recognition.load_image_file(img_path)
-            face_locations = face_recognition.face_locations(img)
-            
-            if not face_locations:
-                print(f"No face detected in {img_path}")
-                continue
-                
-            encoding = face_recognition.face_encodings(img, face_locations)[0]
-            
-            self.student_images.append(img)
-            self.student_names.append(student_name)
-            self.face_encodings.append(encoding)
-            
-        print(f"Dataset loaded successfully with {len(self.student_names)} students")
-        return len(self.student_names) > 0
+
+            encodings_added = 0
+            for image_file in image_files:
+                img_path = os.path.join(folder_path, image_file)
+                img = face_recognition.load_image_file(img_path)
+                face_locations = face_recognition.face_locations(img)
+
+                if not face_locations:
+                    print(f"No face detected in {img_path}")
+                    continue
+
+                encoding = face_recognition.face_encodings(img, face_locations)[0]
+
+                self.student_names.append(student_name)
+                self.face_encodings.append(encoding)
+                encodings_added += 1
+
+            if encodings_added == 0:
+                print(f"No usable face images for student {student_name}")
+
+        unique_students = len(set(self.student_names))
+        print(f"Dataset loaded successfully with {unique_students} students ({len(self.face_encodings)} face encodings)")
+        return len(self.face_encodings) > 0
     
     def mark_attendance(self, name):
         """Mark attendance for a student"""
